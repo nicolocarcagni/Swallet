@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=swallet
+Exec=swallet
+Icon=io.github.nicolocarcagni.Swallet
+Terminal=false
+Type=Application
+Categories=Utility;
+Keywords=GTK;
+StartupNotify=true
+DBusActivatable=true

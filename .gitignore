@@ -1,0 +1,63 @@
+# ==========================================
+# SOLE Wallet - .gitignore
+# ==========================================
+
+# 1. Python Artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 2. Virtual Environments
+venv/
+env/
+.env/
+.venv/
+env.bak/
+venv.bak/
+
+# 3. GNOME Builder, Meson & Flatpak
+builddir/
+_build/
+.flatpak-builder/
+.flatpak/
+compile_commands.json
+.ninja_deps
+.ninja_log
+
+# 4. Build Tools
+build-aux/flatpak-pip-generator.py
+
+# 5. Security & Local Wallet Data
+.env
+wallet.json
+*.key
+*.pem
+*.dat
+secrets.json
+local_config.py
+
+# 6. OS & IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo

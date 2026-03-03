@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="Adw" version="1.0"/>
+  <template class="SwalletWindow" parent="AdwApplicationWindow">
+    <property name="title" translatable="yes">SOLE Wallet</property>
+    <property name="default-width">800</property>
+    <property name="default-height">600</property>
+    <property name="content">
+      <object class="AdwToastOverlay" id="toast_overlay">
+        <property name="child">
+          <object class="AdwViewStack" id="view_stack">
+            <!-- Setup Page -->
+            <child>
+              <object class="AdwViewStackPage">
+                <property name="name">setup_page</property>
+                <property name="child">
+                  <object class="AdwStatusPage" id="setup_status_page">
+                    <property name="title" translatable="yes">Welcome to SOLE</property>
+                    <property name="description" translatable="yes">Create a new wallet or import an existing one.</property>
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">☀️</property>
+                            <style>
+                              <class name="title-1"/>
+                            </style>
+                            <property name="margin-bottom">24</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPasswordEntryRow" id="setup_password_entry">
+                            <property name="title" translatable="yes">Master Password</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_create_wallet">
+                            <property name="label" translatable="yes">Create New Wallet</property>
+                            <signal name="clicked" handler="on_create_wallet_clicked" swapped="no"/>
+                            <style>
+                              <class name="suggested-action"/>
+                              <class name="pill"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_import_wallet">
+                            <property name="label" translatable="yes">Import Private Key</property>
+                            <property name="margin-top">6</property>
+                            <signal name="clicked" handler="on_import_wallet_clicked" swapped="no"/>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Lock Page -->
+            <child>
+              <object class="AdwViewStackPage">
+                <property name="name">lock_page</property>
+                <property name="child">
+                  <object class="AdwStatusPage">
+                    <property name="title" translatable="yes">Wallet Locked</property>
+                    <property name="description" translatable="yes">Enter your master password to unlock.</property>
+                    <property name="child">
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="halign">center</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">☀️</property>
+                            <style>
+                              <class name="title-1"/>
+                            </style>
+                            <property name="margin-bottom">24</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPasswordEntryRow" id="unlock_password_entry">
+                            <property name="title" translatable="yes">Password</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_unlock_wallet">
+                            <property name="label" translatable="yes">Unlock</property>
+                            <signal name="clicked" handler="on_unlock_wallet_clicked" swapped="no"/>
+                            <style>
+                              <class name="suggested-action"/>
+                              <class name="pill"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </property>
+                  </object>
+                </property>
+              </object>
+            </child>
+
+            <!-- Dashboard Page -->
+            <child>
+              <object class="AdwViewStackPage">
+                <property name="name">dashboard_page</property>
+                <property name="child">
+                  <object class="AdwNavigationView" id="nav_view">
+                    <child>
+                      <object class="AdwNavigationPage" id="main_nav_page">
+                        <property name="title">Dashboard</property>
+                        <property name="child">
+                          <object class="AdwToolbarView">
+                            <child type="top">
+                              <object class="AdwHeaderBar">
+                                <property name="title-widget">
+                                  <object class="AdwWindowTitle" id="lbl_conn_status">
+                                    <property name="title">SOLE Wallet</property>
+                                    <property name="subtitle">Connecting...</property>
+                                  </object>
+                                </property>
+                                <child type="start">
+                                  <object class="GtkButton" id="btn_refresh">
+                                    <property name="tooltip-text" translatable="yes">Refresh Wallet</property>
+                                    <property name="icon-name">view-refresh-symbolic</property>
+                                    <signal name="clicked" handler="on_refresh_clicked" swapped="no"/>
+                                  </object>
+                                </child>
+                                <child type="start">
+                                  <object class="GtkButton" id="btn_copy_address">
+                                    <property name="tooltip-text" translatable="yes">Copy Address</property>
+                                    <property name="icon-name">edit-copy-symbolic</property>
+                                    <signal name="clicked" handler="on_copy_address_clicked" swapped="no"/>
+                                  </object>
+                                </child>
+                                <child type="end">
+                                  <object class="GtkMenuButton">
+                                    <property name="icon-name">open-menu-symbolic</property>
+                                    <property name="menu-model">primary_menu</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <property name="content">
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">24</property>
+                                <property name="margin-top">32</property>
+                                <property name="margin-bottom">32</property>
+                                <property name="margin-start">24</property>
+                                <property name="margin-end">24</property>
+                                
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Total Balance</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_balance">
+                                    <property name="label">0.00 SOLE</property>
+                                    <style>
+                                      <class name="title-1"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">16</property>
+                                    <property name="halign">center</property>
+                                    <child>
+                                      <object class="GtkButton" id="btn_nav_receive">
+                                        <property name="label" translatable="yes">Receive</property>
+                                        <signal name="clicked" handler="on_nav_receive_clicked" swapped="no"/>
+                                        <style>
+                                          <class name="pill"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_nav_send">
+                                        <property name="label" translatable="yes">Send</property>
+                                        <signal name="clicked" handler="on_nav_send_clicked" swapped="no"/>
+                                        <style>
+                                          <class name="suggested-action"/>
+                                          <class name="pill"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Recent Transactions</property>
+                                    <property name="halign">start</property>
+                                    <property name="margin-top">24</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <property name="vexpand">True</property>
+                                    <property name="child">
+                                      <object class="GtkListBox" id="list_history">
+                                        <property name="selection-mode">none</property>
+                                        <style>
+                                          <class name="boxed-list"/>
+                                        </style>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+
+                              </object>
+                            </property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+
+                    <!-- Receive Subpage -->
+                    <child>
+                      <object class="AdwNavigationPage" id="receive_nav_page">
+                        <property name="title">Receive SOLE</property>
+                        <property name="child">
+                          <object class="AdwToolbarView">
+                            <child type="top">
+                              <object class="AdwHeaderBar"/>
+                            </child>
+                            <property name="content">
+                              <object class="GtkBox">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">24</property>
+                                <property name="halign">center</property>
+                                <property name="valign">center</property>
+                                <child>
+                                  <object class="GtkPicture" id="qr_picture">
+                                    <property name="width-request">200</property>
+                                    <property name="height-request">200</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel" id="lbl_receive_address">
+                                    <property name="label">Address</property>
+                                    <property name="wrap">True</property>
+                                    <property name="selectable">True</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+
+                    <!-- Send Subpage -->
+                    <child>
+                      <object class="AdwNavigationPage" id="send_nav_page">
+                        <property name="title">Send SOLE</property>
+                        <property name="child">
+                          <object class="AdwToolbarView">
+                            <child type="top">
+                              <object class="AdwHeaderBar"/>
+                            </child>
+                            <property name="content">
+                              <object class="AdwPreferencesPage">
+                                <child>
+                                  <object class="AdwPreferencesGroup">
+                                    <property name="title">Transaction Details</property>
+                                    <child>
+                                      <object class="AdwEntryRow" id="entry_send_address">
+                                        <property name="title">Destination Address</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="AdwEntryRow" id="entry_send_amount">
+                                        <property name="title">Amount (SOLE)</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkButton" id="btn_confirm_send">
+                                    <property name="label">Confirm Send</property>
+                                    <property name="halign">center</property>
+                                    <property name="margin-top">24</property>
+                                    <signal name="clicked" handler="on_confirm_send_clicked" swapped="no"/>
+                                    <style>
+                                      <class name="destructive-action"/>
+                                      <class name="pill"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+
+                  </object>
+                </property>
+              </object>
+            </child>
+            
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+  <menu id="primary_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Preferences</attribute>
+        <attribute name="action">app.preferences</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Keyboard Shortcuts</attribute>
+        <attribute name="action">app.shortcuts</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_About Swallet</attribute>
+        <attribute name="action">app.about</attribute>
+      </item>
+    </section>
+  </menu>
+</interface>

@@ -1,0 +1,6 @@
+cryptography
+base58
+qrcode
+requests
+ecdsa
+Pillow
