@@ -20,6 +20,27 @@
             </child>
           </object>
         </child>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Security</property>
+            <child>
+              <object class="AdwActionRow" id="row_export_key">
+                <property name="title" translatable="yes">Export Private Key</property>
+                <property name="subtitle" translatable="yes">Reveal your raw private key for backup</property>
+                <child type="suffix">
+                  <object class="GtkButton" id="btn_export_key">
+                    <property name="label" translatable="yes">Export</property>
+                    <property name="valign">center</property>
+                    <signal name="clicked" handler="on_export_key_clicked" swapped="no"/>
+                    <style>
+                      <class name="destructive-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
       </object>
     </child>
   </template>

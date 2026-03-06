@@ -66,7 +66,10 @@ class SwalletApplication(Adw.Application):
         win = self.props.active_window
         if win and hasattr(win, 'api'):
             from .preferences import PreferencesWindow
-            pref_win = PreferencesWindow(api_client=win.api)
+            pref_win = PreferencesWindow(
+                api_client=win.api,
+                wallet_path=win.wallet_path,
+            )
             pref_win.set_transient_for(win)
             pref_win.present()
         else:

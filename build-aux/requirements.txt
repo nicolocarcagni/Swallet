@@ -1,6 +1,7 @@
-cryptography
+cffi
 base58
 qrcode
 requests
 ecdsa
+pybind11
 Pillow

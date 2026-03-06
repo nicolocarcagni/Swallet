@@ -35,6 +35,7 @@
                         <child>
                           <object class="AdwPasswordEntryRow" id="setup_password_entry">
                             <property name="title" translatable="yes">Master Password</property>
+                            <signal name="entry-activated" handler="on_create_wallet_clicked" swapped="no"/>
                           </object>
                         </child>
                         <child>
@@ -86,6 +87,7 @@
                         <child>
                           <object class="AdwPasswordEntryRow" id="unlock_password_entry">
                             <property name="title" translatable="yes">Password</property>
+                            <signal name="entry-activated" handler="on_unlock_wallet_clicked" swapped="no"/>
                           </object>
                         </child>
                         <child>
@@ -288,6 +290,7 @@
                                     <child>
                                       <object class="AdwEntryRow" id="entry_send_amount">
                                         <property name="title">Amount (SOLE)</property>
+                                        <signal name="entry-activated" handler="on_confirm_send_clicked" swapped="no"/>
                                       </object>
                                     </child>
                                   </object>

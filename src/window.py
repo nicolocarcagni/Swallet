@@ -59,6 +59,7 @@ class SwalletWindow(Adw.ApplicationWindow):
         
         self.api = SoleAPIClient()
         self.wallet_path = os.path.join(GLib.get_user_data_dir(), "swallet.json")
+        self._poll_timer_id = None
         
         self.check_wallet_state()
 
@@ -136,6 +137,30 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.lbl_receive_address.set_label(address)
         
         self.refresh_dashboard()
+        self._start_polling()
+
+    # ── Auto-polling ─────────────────────────────────────────
+    def _start_polling(self):
+        """Start the 15-second background balance refresh loop."""
+        self._stop_polling()
+        self._poll_timer_id = GLib.timeout_add_seconds(15, self._poll_tick)
+
+    def _stop_polling(self):
+        """Cancel any running polling timer."""
+        if self._poll_timer_id is not None:
+            GLib.source_remove(self._poll_timer_id)
+            self._poll_timer_id = None
+
+    def _poll_tick(self):
+        """Called every 15 seconds. Returns True to keep the loop alive."""
+        if AppWallet.get().wallet_keys is None:
+            self._poll_timer_id = None
+            return False
+        if self.view_stack.get_visible_child_name() != "dashboard_page":
+            self._poll_timer_id = None
+            return False
+        self.refresh_dashboard()
+        return True
 
     def refresh_dashboard(self):
         address = AppWallet.get().wallet_keys.address
@@ -247,13 +272,43 @@ class SwalletWindow(Adw.ApplicationWindow):
 
     @Gtk.Template.Callback()
     def on_confirm_send_clicked(self, btn):
-        target_addr = self.entry_send_address.get_text()
-        amount_text = self.entry_send_amount.get_text()
+        target_addr = self.entry_send_address.get_text().strip()
+        amount_text = self.entry_send_amount.get_text().strip()
+
+        if not target_addr:
+            self.show_toast("Please enter a destination address.")
+            return
         
         try:
-            amount_satoshis = int(float(amount_text) * 100_000_000)
+            amount_sole = float(amount_text)
+            amount_satoshis = int(amount_sole * 100_000_000)
         except ValueError:
             self.show_toast("Invalid amount.")
+            return
+
+        if amount_satoshis <= 0:
+            self.show_toast("Amount must be greater than zero.")
+            return
+
+        # Build a human-readable summary
+        short_addr = f"{target_addr[:8]}...{target_addr[-6:]}"
+        body = f"Send {amount_sole:.8f} SOLE to {short_addr}?"
+
+        dialog = Adw.AlertDialog(
+            heading="Confirm Transaction",
+            body=body,
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("send", "Confirm Send")
+        dialog.set_response_appearance("send", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_send_dialog_response, target_addr, amount_satoshis)
+        dialog.present(self)
+
+    def _on_send_dialog_response(self, dialog, response, target_addr, amount_satoshis):
+        """Handle the confirmation dialog response."""
+        if response != "send":
             return
 
         address = AppWallet.get().wallet_keys.address
