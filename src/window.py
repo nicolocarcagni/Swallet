@@ -69,12 +69,31 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.toast_overlay.add_toast(toast)
 
     def check_wallet_state(self):
+        self.reset_ui_state()
         if os.path.exists(self.wallet_path):
             self.view_stack.set_visible_child_name("lock_page")
             self.unlock_password_entry.grab_focus()
         else:
             self.view_stack.set_visible_child_name("setup_page")
             self.setup_password_entry.grab_focus()
+
+    def reset_ui_state(self):
+        """Completely clears sensitive inputs, balances, and transaction history."""
+        # Intentionally clear string buffers
+        self.setup_password_entry.set_text("")
+        self.unlock_password_entry.set_text("")
+        self.entry_send_address.set_text("")
+        self.entry_send_amount.set_text("")
+        
+        # Reset labels
+        self.lbl_balance.set_label("0.00 SOLE")
+        self.lbl_conn_status.set_subtitle("Not connected")
+        self.lbl_receive_address.set_label("No address")
+        
+        # Clear loops and child widgets
+        self._stop_polling()
+        while child := self.list_history.get_first_child():
+            self.list_history.remove(child)
 
     def _save_wallet(self, priv_hex: str, password: str):
         encrypted = WalletAES.encrypt(priv_hex, password)
@@ -98,7 +117,68 @@ class SwalletWindow(Adw.ApplicationWindow):
 
     @Gtk.Template.Callback()
     def on_import_wallet_clicked(self, btn):
-        self.show_toast("Import Private Key not fully implemented yet in UI.")
+        password = self.setup_password_entry.get_text()
+        if not password:
+            self.show_toast("Please enter a Master Password to secure the imported wallet.")
+            self.setup_password_entry.grab_focus()
+            return
+            
+        dialog = Adw.AlertDialog(
+            heading="Import Wallet",
+            body="Paste your 64-character hexadecimal private key.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("import", "Import")
+        dialog.set_response_appearance("import", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        # Add a password entry as extra child to hide the private key
+        pk_entry = Gtk.PasswordEntry(
+            show_peek_icon=True,
+            placeholder_text="Hex Private Key",
+            hexpand=True,
+        )
+        pk_entry.add_css_class("card")
+        dialog.set_extra_child(pk_entry)
+
+        dialog.connect("response", self._on_import_dialog_response, pk_entry, password)
+        dialog.present(self)
+
+    def _on_import_dialog_response(self, dialog, response, pk_entry, password):
+        if response != "import":
+            return
+
+        priv_hex = pk_entry.get_text().strip()
+        
+        if not priv_hex:
+            self.show_toast("Private key cannot be empty.")
+            return
+            
+        if len(priv_hex) != 64:
+            self.show_toast(f"Invalid private key length ({len(priv_hex)}). Must be exactly 64 characters.")
+            return
+            
+        try:
+            # Validate hex
+            int(priv_hex, 16)
+        except ValueError:
+            self.show_toast("Invalid private key format. Must be hexadecimal.")
+            return
+
+        try:
+            # Reconstruct keys from hex to ensure validity
+            keys = WalletKeys(private_key_hex=priv_hex)
+            
+            # Save and load
+            self._save_wallet(keys.private_key_hex, password)
+            AppWallet.get().load_keys(keys.private_key_hex)
+            
+            self.show_dashboard()
+            self.show_toast("Wallet imported successfully!")
+            
+        except Exception as e:
+            self.show_toast(f"Error importing wallet: {e}")
 
     @Gtk.Template.Callback()
     def on_unlock_wallet_clicked(self, btn):
@@ -130,6 +210,10 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.show_toast(f"Unlock failed: {err_msg}")
 
     def show_dashboard(self):
+        # Clear passwords from widgets since we are now unlocked
+        self.setup_password_entry.set_text("")
+        self.unlock_password_entry.set_text("")
+        
         self.view_stack.set_visible_child_name("dashboard_page")
         address = AppWallet.get().wallet_keys.address
         short_addr = f"{address[:6]}...{address[-4:]}"
@@ -204,7 +288,7 @@ class SwalletWindow(Adw.ApplicationWindow):
                     # Sum outputs that DO go to us
                     amount = sum(out.get('value_sole', 0.0) for out in tx.get('outputs', []) if out.get('receiver_address') == address)
 
-                row = Adw.ActionRow.new()
+                row = Adw.ExpanderRow.new()
                 
                 # Setup Icon
                 icon = Gtk.Image()
@@ -231,7 +315,54 @@ class SwalletWindow(Adw.ApplicationWindow):
                 short_id = f"{tx_id[:4]}...{tx_id[-4:]}" if len(tx_id) > 8 else tx_id
                 
                 row.set_subtitle(f"{date_str} • Tx: {short_id}")
+                
+                # ── Advanced Details inside Expander ──
+                
+                # Full TXID
+                txid_row = Adw.ActionRow(title="Transaction Hash")
+                txid_label = Gtk.Label(label=tx_id, selectable=True, wrap=True, max_width_chars=32, halign=Gtk.Align.END)
+                txid_label.add_css_class("dim-label")
+                txid_row.add_suffix(txid_label)
+                
+                copy_btn = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER)
+                copy_btn.add_css_class("flat")
+                copy_btn.connect("clicked", self._on_copy_txid_clicked, tx_id)
+                txid_row.add_suffix(copy_btn)
+                row.add_row(txid_row)
+                
+                # Date & Time
+                time_row = Adw.ActionRow(title="Date &amp; Time")
+                full_date_str = dt.format("%Y-%m-%d %H:%M:%S") if dt else "Unknown Date"
+                time_label = Gtk.Label(label=full_date_str)
+                time_label.add_css_class("dim-label")
+                time_row.add_suffix(time_label)
+                row.add_row(time_row)
+                
+                # Status / Confirmations
+                status_row = Adw.ActionRow(title="Status")
+                # Assuming simple confirmed status or using string if available
+                is_confirmed = tx.get("confirmed", True)
+                status_text = "Confirmed" if is_confirmed else "Unconfirmed"
+                status_label = Gtk.Label(label=status_text)
+                status_label.add_css_class("dim-label")
+                status_row.add_suffix(status_label)
+                row.add_row(status_row)
+                
+                # Network Fee
+                fee = tx.get("fee_sole", None)
+                if fee is not None:
+                    fee_row = Adw.ActionRow(title="Network Fee")
+                    fee_label = Gtk.Label(label=f"{fee:.8f} SOLE")
+                    fee_label.add_css_class("dim-label")
+                    fee_row.add_suffix(fee_label)
+                    row.add_row(fee_row)
+                
                 self.list_history.append(row)
+
+    def _on_copy_txid_clicked(self, btn, tx_id):
+        clipboard = self.get_clipboard()
+        clipboard.set_content(Gdk.ContentProvider.new_for_value(tx_id))
+        self.show_toast("Transaction Hash copied to clipboard!")
 
     @Gtk.Template.Callback()
     def on_copy_address_clicked(self, btn):

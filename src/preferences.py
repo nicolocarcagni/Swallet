@@ -132,3 +132,133 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def _show_toast(self, message: str):
         toast = Adw.Toast.new(GLib.markup_escape_text(str(message)))
         self.add_toast(toast)
+
+    # ── Change Master Password ───────────────────────────────
+    @Gtk.Template.Callback()
+    def on_change_password_clicked(self, btn):
+        dialog = Adw.AlertDialog(
+            heading="Change Master Password",
+            body="Update the password used to encrypt your wallet.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("change", "Change Password")
+        dialog.set_response_appearance("change", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        # Create a ListBox to hold the entry rows in a native "card" style
+        list_box = Gtk.ListBox()
+        list_box.add_css_class("boxed-list")
+        list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+
+        entry_old = Adw.PasswordEntryRow(title="Current Password")
+        entry_new = Adw.PasswordEntryRow(title="New Password")
+        entry_confirm = Adw.PasswordEntryRow(title="Confirm New Password")
+
+        list_box.append(entry_old)
+        list_box.append(entry_new)
+        list_box.append(entry_confirm)
+
+        dialog.set_extra_child(list_box)
+        dialog.connect("response", self._on_change_password_response, entry_old, entry_new, entry_confirm)
+        dialog.present(self)
+
+    def _on_change_password_response(self, dialog, response, entry_old, entry_new, entry_confirm):
+        if response != "change":
+            return
+
+        old_pw = entry_old.get_text()
+        new_pw = entry_new.get_text()
+        confirm_pw = entry_confirm.get_text()
+
+        if not old_pw or not new_pw or not confirm_pw:
+            self._show_toast("All fields are required.")
+            return
+
+        if new_pw != confirm_pw:
+            self._show_toast("New passwords do not match.")
+            return
+
+        try:
+            from .crypto import WalletAES, AppWallet
+            with open(self.wallet_path, 'r') as f:
+                encrypted = json.load(f)
+            
+            # Verify old password and recover private key
+            priv_hex = WalletAES.decrypt(encrypted, old_pw)
+            
+            # Re-encrypt with new password
+            new_encrypted = WalletAES.encrypt(priv_hex, new_pw)
+            
+            # Save to disk
+            with open(self.wallet_path, 'w') as f:
+                json.dump(new_encrypted, f)
+            
+            self._show_toast("Master password changed successfully.")
+            
+        except ValueError:
+            self._show_toast("Incorrect current password.")
+            return
+        except Exception as e:
+            self._show_toast(f"Error changing password: {e}")
+            return
+
+    # ── Reset Wallet ─────────────────────────────────────────
+    @Gtk.Template.Callback()
+    def on_reset_wallet_clicked(self, btn):
+        dialog = Adw.AlertDialog(
+            heading="Reset Wallet",
+            body="Are you sure you want to delete your wallet? This action is irreversible and all local data will be wiped.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("reset", "Delete Wallet")
+        dialog.set_response_appearance("reset", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        pw_entry = Gtk.PasswordEntry(
+            show_peek_icon=True,
+            placeholder_text="Verify Master Password",
+            hexpand=True,
+        )
+        pw_entry.add_css_class("card")
+        dialog.set_extra_child(pw_entry)
+
+        dialog.connect("response", self._on_reset_password_response, pw_entry)
+        dialog.present(self)
+
+    def _on_reset_password_response(self, dialog, response, pw_entry):
+        if response != "reset":
+            return
+
+        password = pw_entry.get_text()
+        if not password:
+            self._show_toast("Password cannot be empty.")
+            return
+
+        try:
+            from .crypto import WalletAES, AppWallet
+            with open(self.wallet_path, 'r') as f:
+                encrypted = json.load(f)
+            # Verify password
+            WalletAES.decrypt(encrypted, password)
+            
+            # Delete file
+            os.remove(self.wallet_path)
+            
+            # Clear session
+            AppWallet.get().wallet_keys = None
+            
+            # Navigate back to setup in main window
+            main_win = self.get_transient_for()
+            if main_win and hasattr(main_win, 'check_wallet_state'):
+                main_win.check_wallet_state()
+            
+            self.close()
+            
+        except ValueError:
+            self._show_toast("Wrong password.")
+            return
+        except Exception as e:
+            self._show_toast(f"Error resetting wallet: {e}")
+            return

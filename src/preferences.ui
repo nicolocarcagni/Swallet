@@ -24,6 +24,19 @@
           <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">Security</property>
             <child>
+              <object class="AdwActionRow" id="row_change_password">
+                <property name="title" translatable="yes">Change Master Password</property>
+                <property name="subtitle" translatable="yes">Update the password used to encrypt your wallet</property>
+                <child type="suffix">
+                  <object class="GtkButton" id="btn_change_password">
+                    <property name="label" translatable="yes">Change</property>
+                    <property name="valign">center</property>
+                    <signal name="clicked" handler="on_change_password_clicked" swapped="no"/>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
               <object class="AdwActionRow" id="row_export_key">
                 <property name="title" translatable="yes">Export Private Key</property>
                 <property name="subtitle" translatable="yes">Reveal your raw private key for backup</property>
@@ -32,6 +45,22 @@
                     <property name="label" translatable="yes">Export</property>
                     <property name="valign">center</property>
                     <signal name="clicked" handler="on_export_key_clicked" swapped="no"/>
+                    <style>
+                      <class name="destructive-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwActionRow" id="row_reset_wallet">
+                <property name="title" translatable="yes">Reset Wallet</property>
+                <property name="subtitle" translatable="yes">Irreversibly delete local wallet data</property>
+                <child type="suffix">
+                  <object class="GtkButton" id="btn_reset_wallet">
+                    <property name="label" translatable="yes">Reset</property>
+                    <property name="valign">center</property>
+                    <signal name="clicked" handler="on_reset_wallet_clicked" swapped="no"/>
                     <style>
                       <class name="destructive-action"/>
                     </style>
