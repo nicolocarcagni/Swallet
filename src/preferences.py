@@ -8,7 +8,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
     __gtype_name__ = 'PreferencesWindow'
 
     entry_node_url = Gtk.Template.Child()
-    btn_export_key = Gtk.Template.Child()
+    group_wallets = Gtk.Template.Child()
 
     def __init__(self, api_client, wallet_path, **kwargs):
         super().__init__(**kwargs)
@@ -16,6 +16,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.wallet_path = wallet_path
         self.config_path = os.path.join(GLib.get_user_data_dir(), "swallet_config.json")
         self._load_config()
+        self.refresh_wallets_list()
 
     def _load_config(self):
         if os.path.exists(self.config_path):
@@ -44,54 +45,200 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.api_client.set_node(url)
         self._save_config(url)
 
-    # ── Export Private Key ───────────────────────────────────
-    @Gtk.Template.Callback()
-    def on_export_key_clicked(self, btn):
-        """Prompt for master password, then reveal the private key."""
-        dialog = Adw.AlertDialog(
-            heading="Enter Master Password",
-            body="Your password is needed to decrypt the private key.",
-        )
+    # ── Master Password Prompt Helper ────────────────────────
+    def _prompt_password(self, heading: str, body: str, callback, *args):
+        dialog = Adw.AlertDialog(heading=heading, body=body)
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("decrypt", "Decrypt")
-        dialog.set_response_appearance("decrypt", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.add_response("confirm", "Confirm")
+        dialog.set_response_appearance("confirm", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")
-
-        # Add a password entry as extra child
-        pw_entry = Gtk.PasswordEntry(
-            show_peek_icon=True,
-            placeholder_text="Master Password",
-            hexpand=True,
-        )
+        
+        pw_entry = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text="Master Password", hexpand=True)
         pw_entry.add_css_class("card")
         dialog.set_extra_child(pw_entry)
-
-        dialog.connect("response", self._on_export_password_response, pw_entry)
+        
+        dialog.connect("response", self._on_password_prompt_response, pw_entry, callback, args)
         dialog.present(self)
-
-    def _on_export_password_response(self, dialog, response, pw_entry):
-        if response != "decrypt":
+        
+    def _on_password_prompt_response(self, dialog, response, pw_entry, callback, args):
+        if response != "confirm":
             return
-
         password = pw_entry.get_text()
         if not password:
             self._show_toast("Password cannot be empty.")
             return
 
+        from .crypto import WalletAES
         try:
-            from .crypto import WalletAES
             with open(self.wallet_path, 'r') as f:
                 encrypted = json.load(f)
-            priv_hex = WalletAES.decrypt(encrypted, password)
-        except ValueError:
-            self._show_toast("Wrong password.")
-            return
-        except Exception as e:
-            self._show_toast(f"Decryption error: {e}")
+            WalletAES.decrypt(encrypted, password)
+        except Exception:
+            self._show_toast("Incorrect password.")
             return
 
-        self._show_key_dialog(priv_hex)
+        callback(password, *args)
+
+    def _save_wallet_state(self, password: str):
+        from .crypto import AppWallet, WalletAES
+        keys_str = json.dumps(AppWallet.get().get_all_hex_keys())
+        encrypted = WalletAES.encrypt(keys_str, password)
+        with open(self.wallet_path, 'w') as f:
+            json.dump(encrypted, f)
+
+    def _sync_main_window(self):
+        main_win = self.get_transient_for()
+        if main_win:
+            if hasattr(main_win, 'refresh_wallet_switcher'):
+                main_win.refresh_wallet_switcher()
+            if hasattr(main_win, 'show_dashboard'):
+                main_win.show_dashboard()
+
+    # ── Wallet Management ────────────────────────────────────
+    def refresh_wallets_list(self):
+        from .crypto import AppWallet
+        
+        # Remove old rows securely by tracking them natively
+        if hasattr(self, '_wallet_rows'):
+            for r in self._wallet_rows:
+                try:
+                    self.group_wallets.remove(r)
+                except Exception:
+                    pass
+        self._wallet_rows = []
+
+        wallet_dict = AppWallet.get().wallets
+        active_addr = AppWallet.get().current_address
+
+        for address in wallet_dict.keys():
+            short_addr = f"{address[:8]}...{address[-6:]}"
+            subtitle = "Currently Active" if address == active_addr else ""
+            
+            row = Adw.ActionRow(title=short_addr, subtitle=subtitle)
+            
+            if address == active_addr:
+                check_icon = Gtk.Image(icon_name="object-select-symbolic", margin_start=12, margin_end=6)
+                row.add_prefix(check_icon)
+            
+            # Export btn
+            btn_export = Gtk.Button(icon_name="view-reveal-symbolic", valign=Gtk.Align.CENTER)
+            btn_export.add_css_class("flat")
+            btn_export.connect("clicked", self.on_export_wallet_clicked, address)
+            row.add_suffix(btn_export)
+
+            # Delete btn
+            btn_delete = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+            btn_delete.add_css_class("flat")
+            btn_delete.add_css_class("error")
+            btn_delete.connect("clicked", self.on_delete_wallet_clicked, address)
+            row.add_suffix(btn_delete)
+
+            self.group_wallets.add(row)
+            self._wallet_rows.append(row)
+
+    @Gtk.Template.Callback()
+    def on_pref_create_wallet_clicked(self, btn):
+        self._prompt_password("Create Wallet", "Enter your master password to secure the new wallet.", self._do_create_wallet)
+        
+    def _do_create_wallet(self, password):
+        from .crypto import WalletKeys, AppWallet
+        try:
+            keys = WalletKeys()
+            AppWallet.get().add_key(keys.private_key_hex)
+            self._save_wallet_state(password)
+            self.refresh_wallets_list()
+            self._sync_main_window()
+            self._show_toast("New wallet created successfully!")
+        except Exception as e:
+            self._show_toast(f"Error: {e}")
+
+    @Gtk.Template.Callback()
+    def on_pref_import_wallet_clicked(self, btn):
+        dialog = Adw.AlertDialog(
+            heading="Import Wallet",
+            body="Enter your Master Password and paste the 64-character hexadecimal private key."
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("import", "Import")
+        dialog.set_response_appearance("import", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        pw_entry = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text="Master Password")
+        pw_entry.add_css_class("card")
+        pk_entry = Gtk.PasswordEntry(show_peek_icon=True, placeholder_text="Hex Private Key")
+        pk_entry.add_css_class("card")
+        
+        box.append(pw_entry)
+        box.append(pk_entry)
+        dialog.set_extra_child(box)
+        
+        dialog.connect("response", self._on_pref_import_response, pw_entry, pk_entry)
+        dialog.present(self)
+
+    def _on_pref_import_response(self, dialog, response, pw_entry, pk_entry):
+        if response != "import":
+            return
+            
+        password = pw_entry.get_text()
+        priv_hex = pk_entry.get_text().strip()
+        
+        if not password or not priv_hex:
+            self._show_toast("Both fields are required.")
+            return
+            
+        from .crypto import WalletAES, WalletKeys, AppWallet
+        try:
+            with open(self.wallet_path, 'r') as f:
+                encrypted = json.load(f)
+            WalletAES.decrypt(encrypted, password)
+        except Exception:
+            self._show_toast("Incorrect master password.")
+            return
+            
+        if len(priv_hex) != 64:
+            self._show_toast("Private key must be exactly 64 characters.")
+            return
+
+        try:
+            keys = WalletKeys(private_key_hex=priv_hex)
+            AppWallet.get().add_key(keys.private_key_hex)
+            self._save_wallet_state(password)
+            
+            self.refresh_wallets_list()
+            self._sync_main_window()
+            self._show_toast("Wallet imported successfully!")
+        except Exception as e:
+            self._show_toast(f"Import error: {e}")
+
+    def on_delete_wallet_clicked(self, btn, address):
+        from .crypto import AppWallet
+        if len(AppWallet.get().wallets) <= 1:
+            self._show_toast("Cannot delete the last remaining wallet. Use 'Reset Wallet' under Security instead.")
+            return
+        self._prompt_password("Delete Wallet", f"Are you sure you want to remove wallet {address[:8]}...?", self._do_delete_wallet, address)
+
+    def _do_delete_wallet(self, password, address):
+        from .crypto import AppWallet
+        try:
+            AppWallet.get().remove_key(address)
+            self._save_wallet_state(password)
+            self.refresh_wallets_list()
+            self._sync_main_window()
+            self._show_toast("Wallet removed safely.")
+        except Exception as e:
+            self._show_toast(f"Error: {e}")
+
+    def on_export_wallet_clicked(self, btn, address):
+        self._prompt_password("Export Private Key", f"Enter your master password to reveal the private key for {address[:8]}...?", self._do_export_wallet, address)
+
+    def _do_export_wallet(self, password, address):
+        from .crypto import AppWallet
+        wk = AppWallet.get().wallets.get(address)
+        if wk:
+            self._show_key_dialog(wk.private_key_hex)
 
     def _show_key_dialog(self, priv_hex: str):
         """Display the private key with a warning and copy button."""
@@ -184,11 +331,13 @@ class PreferencesWindow(Adw.PreferencesWindow):
             with open(self.wallet_path, 'r') as f:
                 encrypted = json.load(f)
             
-            # Verify old password and recover private key
-            priv_hex = WalletAES.decrypt(encrypted, old_pw)
+            # Verify old password and recover
+            WalletAES.decrypt(encrypted, old_pw)
             
-            # Re-encrypt with new password
-            new_encrypted = WalletAES.encrypt(priv_hex, new_pw)
+            # Re-encrypt the current app wallet listing with new password
+            from .crypto import AppWallet
+            keys_str = json.dumps(AppWallet.get().get_all_hex_keys())
+            new_encrypted = WalletAES.encrypt(keys_str, new_pw)
             
             # Save to disk
             with open(self.wallet_path, 'w') as f:

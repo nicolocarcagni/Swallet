@@ -44,6 +44,10 @@ class SwalletWindow(Adw.ApplicationWindow):
     btn_nav_receive = Gtk.Template.Child()
     btn_nav_send = Gtk.Template.Child()
     list_history = Gtk.Template.Child()
+
+    btn_wallet_switcher = Gtk.Template.Child()
+    popover_wallets = Gtk.Template.Child()
+    list_wallets = Gtk.Template.Child()
     
     # Receive
     qr_picture = Gtk.Template.Child()
@@ -92,11 +96,24 @@ class SwalletWindow(Adw.ApplicationWindow):
         
         # Clear loops and child widgets
         self._stop_polling()
+        
+        if hasattr(self, '_history_rows'):
+            for r in self._history_rows:
+                try:
+                    self.list_history.remove(r)
+                except Exception:
+                    pass
+        self._history_rows = []
+        
         while child := self.list_history.get_first_child():
-            self.list_history.remove(child)
+            try:
+                self.list_history.remove(child)
+            except Exception:
+                break
 
-    def _save_wallet(self, priv_hex: str, password: str):
-        encrypted = WalletAES.encrypt(priv_hex, password)
+    def _save_wallet(self, password: str):
+        keys_str = json.dumps(AppWallet.get().get_all_hex_keys())
+        encrypted = WalletAES.encrypt(keys_str, password)
         with open(self.wallet_path, 'w') as f:
             json.dump(encrypted, f)
 
@@ -109,8 +126,8 @@ class SwalletWindow(Adw.ApplicationWindow):
             
         try:
             keys = WalletKeys()
-            self._save_wallet(keys.private_key_hex, password)
-            AppWallet.get().load_keys(keys.private_key_hex)
+            AppWallet.get().add_key(keys.private_key_hex)
+            self._save_wallet(password)
             self.show_dashboard()
         except Exception as e:
             self.show_toast(f"Error creating wallet: {e}")
@@ -171,8 +188,8 @@ class SwalletWindow(Adw.ApplicationWindow):
             keys = WalletKeys(private_key_hex=priv_hex)
             
             # Save and load
-            self._save_wallet(keys.private_key_hex, password)
-            AppWallet.get().load_keys(keys.private_key_hex)
+            AppWallet.get().add_key(keys.private_key_hex)
+            self._save_wallet(password)
             
             self.show_dashboard()
             self.show_toast("Wallet imported successfully!")
@@ -202,7 +219,13 @@ class SwalletWindow(Adw.ApplicationWindow):
     def _on_unlock_success(self, priv_hex):
         self.btn_unlock_wallet.set_sensitive(True)
         self.unlock_password_entry.set_text("")
-        AppWallet.get().load_keys(priv_hex)
+        
+        try:
+            keys_data = json.loads(priv_hex)
+        except json.JSONDecodeError:
+            keys_data = priv_hex  # Legacy single string format
+            
+        AppWallet.get().load_keys(keys_data)
         self.show_dashboard()
 
     def _on_unlock_error(self, err_msg):
@@ -215,13 +238,77 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.unlock_password_entry.set_text("")
         
         self.view_stack.set_visible_child_name("dashboard_page")
-        address = AppWallet.get().wallet_keys.address
-        short_addr = f"{address[:6]}...{address[-4:]}"
-        self.lbl_conn_status.set_subtitle(short_addr)
-        self.lbl_receive_address.set_label(address)
         
+        wallet = AppWallet.get().wallet_keys
+        if wallet:
+            address = wallet.address
+            short_addr = f"{address[:6]}...{address[-4:]}"
+            self.lbl_conn_status.set_subtitle(short_addr)
+            self.lbl_receive_address.set_label(address)
+        
+        self.refresh_wallet_switcher()
         self.refresh_dashboard()
         self._start_polling()
+
+    def refresh_wallet_switcher(self):
+        # Initialize tracking array safely
+        if not hasattr(self, '_switcher_rows'):
+            self._switcher_rows = []
+            
+        wallet_dict = AppWallet.get().wallets
+        active_addr = AppWallet.get().current_address
+        
+        # Track existing addresses in the UI
+        existing_addrs = [r.get_name() for r in self._switcher_rows if r.get_name()]
+        
+        # 1. Safely remove wallets that were deleted
+        for r in list(self._switcher_rows):
+            addr = r.get_name()
+            if addr and addr not in wallet_dict:
+                try:
+                    self.list_wallets.remove(r)
+                except Exception:
+                    pass
+                self._switcher_rows.remove(r)
+
+        # 2. Append newly added wallets (do not overwrite existing)
+        for address in wallet_dict.keys():
+            short_addr = f"{address[:8]}...{address[-6:]}"
+            
+            if address not in existing_addrs:
+                row = Gtk.ListBoxRow()
+                row.set_name(address)
+                label = Gtk.Label(label=short_addr, halign=Gtk.Align.START, margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
+                row.set_child(label)
+                self.list_wallets.append(row)
+                self._switcher_rows.append(row)
+                
+        # 3. Update active wallet highlighting safely
+        for r in self._switcher_rows:
+            address = r.get_name()
+            if address:
+                short_addr = f"{address[:8]}...{address[-6:]}"
+                label = r.get_child()
+                if address == active_addr:
+                    label.add_css_class("accent")
+                    label.set_markup(f"<b>{short_addr}</b>")
+                else:
+                    label.remove_css_class("accent")
+                    label.set_label(short_addr)
+
+    @Gtk.Template.Callback()
+    def on_wallet_switched(self, listbox, row):
+        new_addr = row.get_name()
+        if not new_addr:
+            return
+            
+        print(f"DEBUG: Switcher selected new address: {new_addr}")
+        if new_addr != AppWallet.get().current_address:
+            AppWallet.get().current_address = new_addr
+            self.reset_ui_state()
+            self.show_dashboard()
+            
+        self.popover_wallets.popdown()
 
     # ── Auto-polling ─────────────────────────────────────────
     def _start_polling(self):
@@ -247,7 +334,10 @@ class SwalletWindow(Adw.ApplicationWindow):
         return True
 
     def refresh_dashboard(self):
-        address = AppWallet.get().wallet_keys.address
+        wallet = AppWallet.get().wallet_keys
+        if not wallet:
+            return
+        address = wallet.address
         self.api.get_balance_async(address, self._on_balance_fetched)
         self.api.get_transactions_async(address, self._on_history_fetched)
 
@@ -265,14 +355,26 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.refresh_dashboard()
 
     def _on_history_fetched(self, success, result):
-        if success and isinstance(result, list):
-            while child := self.list_history.get_first_child():
+        if hasattr(self, '_history_rows'):
+            for r in self._history_rows:
+                try:
+                    self.list_history.remove(r)
+                except Exception:
+                    pass
+        self._history_rows = []
+        
+        while child := self.list_history.get_first_child():
+            try:
                 self.list_history.remove(child)
+            except Exception:
+                break
 
+        if success and isinstance(result, list):
             if not result:
                 empty = Gtk.Label(label="No transactions found")
                 empty.add_css_class("dim-label")
                 self.list_history.append(empty)
+                self._history_rows.append(empty)
                 return
 
             address = AppWallet.get().wallet_keys.address
@@ -358,6 +460,7 @@ class SwalletWindow(Adw.ApplicationWindow):
                     row.add_row(fee_row)
                 
                 self.list_history.append(row)
+                self._history_rows.append(row)
 
     def _on_copy_txid_clicked(self, btn, tx_id):
         clipboard = self.get_clipboard()

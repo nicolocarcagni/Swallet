@@ -245,7 +245,7 @@ class TransactionBuilder:
         return self._serialize_core(include_sig=True).hex()
 
 class AppWallet:
-    """Singleton-like structure to hold the active decrypted wallet in RAM."""
+    """Singleton-like structure to hold the active decrypted wallets in RAM."""
     _instance = None
     
     @classmethod
@@ -255,10 +255,51 @@ class AppWallet:
         return cls._instance
 
     def __init__(self):
-        self.wallet_keys = None
+        self.wallets = {}  # dict[address, WalletKeys]
+        self.current_address = None
 
-    def load_keys(self, private_key_hex: str):
-        self.wallet_keys = WalletKeys(private_key_hex)
+    @property
+    def wallet_keys(self) -> WalletKeys:
+        """Returns the currently active WalletKeys instance, or None."""
+        if self.current_address and self.current_address in self.wallets:
+            return self.wallets[self.current_address]
+        return None
+
+    def load_keys(self, private_keys):
+        """Load one or multiple private keys. Handles list or single string (legacy)."""
+        self.wallets.clear()
+        self.current_address = None
+        
+        if not private_keys:
+            return
+            
+        # Normalize to list for backward compatibility
+        if isinstance(private_keys, str):
+            private_keys = [private_keys]
+            
+        for hex_key in private_keys:
+            if isinstance(hex_key, str):
+                wk = WalletKeys(hex_key)
+                self.wallets[wk.address] = wk
+                
+        # Set the first loaded wallet as the active one by default
+        if self.wallets:
+            self.current_address = list(self.wallets.keys())[0]
+
+    def add_key(self, private_key_hex: str):
+        wk = WalletKeys(private_key_hex)
+        self.wallets[wk.address] = wk
+        self.current_address = wk.address
+
+    def remove_key(self, address: str):
+        if address in self.wallets:
+            del self.wallets[address]
+        if self.current_address == address:
+            self.current_address = list(self.wallets.keys())[0] if self.wallets else None
+
+    def get_all_hex_keys(self) -> list:
+        return [wk.private_key_hex for wk in self.wallets.values()]
         
     def clear(self):
-        self.wallet_keys = None
+        self.wallets.clear()
+        self.current_address = None
