@@ -380,15 +380,27 @@ class SwalletWindow(Adw.ApplicationWindow):
             address = AppWallet.get().wallet_keys.address
 
             for tx in result:
-                is_sent = any(inp.get("sender_address") == address for inp in tx.get("inputs", []))
+                inputs_list = tx.get("inputs", [])
+                outputs_list = tx.get("outputs", [])
+                is_sent = any(inp.get("sender_address") == address for inp in inputs_list)
                 
                 amount = 0
+                target_address = ""
+                
                 if is_sent:
                     # Sum outputs that do NOT go back to us (the actual sent value)
-                    amount = sum(out.get('value_sole', 0.0) for out in tx.get('outputs', []) if out.get('receiver_address') != address)
+                    out_vals = [out for out in outputs_list if out.get('receiver_address') != address]
+                    amount = sum(out.get('value_sole', 0.0) for out in out_vals)
+                    if out_vals:
+                        target_address = out_vals[0].get('receiver_address', 'Unknown')
                 else:
                     # Sum outputs that DO go to us
-                    amount = sum(out.get('value_sole', 0.0) for out in tx.get('outputs', []) if out.get('receiver_address') == address)
+                    amount = sum(out.get('value_sole', 0.0) for out in outputs_list if out.get('receiver_address') == address)
+                    # Determine sender for incoming tx
+                    if tx.get("is_coinbase", False) or not inputs_list or not inputs_list[0].get("sender_address"):
+                        target_address = "Network Reward (Coinbase)"
+                    else:
+                        target_address = inputs_list[0].get("sender_address", "Unknown")
 
                 row = Adw.ExpanderRow.new()
                 
@@ -396,9 +408,11 @@ class SwalletWindow(Adw.ApplicationWindow):
                 icon = Gtk.Image()
                 if is_sent:
                     icon.set_from_icon_name("go-up-symbolic")
+                    icon.add_css_class("warning")
                     row.set_title("Sent SOLE")
                 else:
                     icon.set_from_icon_name("go-down-symbolic")
+                    icon.add_css_class("success")
                     row.set_title("Received SOLE")
                 row.add_prefix(icon)
 
@@ -408,17 +422,28 @@ class SwalletWindow(Adw.ApplicationWindow):
                 amt_label.add_css_class("error" if is_sent else "success")
                 row.add_suffix(amt_label)
 
-                # Format timestamp
+                # Format timestamp and context
                 timestamp = tx.get("timestamp", 0)
                 dt = GLib.DateTime.new_from_unix_local(timestamp)
                 date_str = dt.format("%b %d, %H:%M") if dt else "Unknown Time"
                 
                 tx_id = tx.get('id', 'Unknown')
-                short_id = f"{tx_id[:4]}...{tx_id[-4:]}" if len(tx_id) > 8 else tx_id
-                
-                row.set_subtitle(f"{date_str} • Tx: {short_id}")
+                row.set_subtitle(date_str)
                 
                 # ── Advanced Details inside Expander ──
+                
+                # Target Address (From/To)
+                addr_title = "Recipient (To)" if is_sent else "Sender (From)"
+                addr_row = Adw.ActionRow(title=addr_title)
+                addr_label = Gtk.Label(label=target_address, selectable=True, wrap=True, max_width_chars=32, halign=Gtk.Align.END)
+                addr_label.add_css_class("dim-label")
+                addr_row.add_suffix(addr_label)
+                
+                addr_copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER)
+                addr_copy.add_css_class("flat")
+                addr_copy.connect("clicked", self._on_copy_txid_clicked, target_address)
+                addr_row.add_suffix(addr_copy)
+                row.add_row(addr_row)
                 
                 # Full TXID
                 txid_row = Adw.ActionRow(title="Transaction Hash")

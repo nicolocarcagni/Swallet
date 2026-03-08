@@ -51,15 +51,45 @@ class SwalletApplication(Adw.Application):
 
     def on_about_action(self, *args):
         """Callback for the app.about action."""
-        about = Adw.AboutDialog(application_name='swallet',
-                                application_icon='io.github.nicolocarcagni.Swallet',
-                                developer_name='nicolocarcagni',
-                                version='0.1.0',
-                                developers=['nicolocarcagni'],
-                                copyright='© 2026 nicolocarcagni')
-        # Translators: Replace "translator-credits" with your name/username, and optionally an email or URL.
-        about.set_translator_credits(_('translator-credits'))
-        about.present(self.props.active_window)
+        # Singleton pattern / Lazy instantiation
+        if hasattr(self, '_about_dialog') and self._about_dialog:
+            self._about_dialog.present(self.props.active_window)
+            return
+
+        self._about_dialog = Adw.AboutDialog(
+            application_name='Swallet',
+            application_icon='io.github.nicolocarcagni.Swallet',
+            developer_name='Nicolò Carcagni',
+            version='1.0.0',
+            developers=['Nicolò Carcagni https://github.com/nicolocarcagni'],
+            copyright='© 2026 Nicolò Carcagni',
+            license_type=Gtk.License.GPL_3_0,
+            website='https://github.com/nicolocarcagni/Swallet',
+            issue_url='https://github.com/nicolocarcagni/Swallet/issues',
+        )
+
+        # Lazy load the COPYING file using non-blocking/on-demand I/O
+        import os
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        copying_path = os.path.join(base_dir, 'COPYING')
+        
+        try:
+            # Fallback path for Flatpak execution scopes
+            if not os.path.exists(copying_path):
+                copying_path = '/app/share/licenses/swallet/COPYING'
+                
+            if os.path.exists(copying_path):
+                with open(copying_path, 'r', encoding='utf-8') as f:
+                    self._about_dialog.set_license(f.read())
+        except Exception as e:
+            print(f"Warning: Could not read COPYING file: {e}")
+
+        # Ensure memory is properly freed upon dismissal
+        def on_closed(dialog):
+            self._about_dialog = None
+            
+        self._about_dialog.connect('closed', on_closed)
+        self._about_dialog.present(self.props.active_window)
 
     def on_preferences_action(self, widget, _):
         """Callback for the app.preferences action."""
