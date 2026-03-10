@@ -31,6 +31,7 @@ swallet_sources = [
   'api.py',
   'crypto.py',
   'main.py',
+  'ui_helpers.py',
   'window.py',
   'preferences.py',
 ]

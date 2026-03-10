@@ -18,7 +18,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import sys
+import logging
 import gi
+
+logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -60,7 +63,7 @@ class SwalletApplication(Adw.Application):
             application_name='Swallet',
             application_icon='io.github.nicolocarcagni.Swallet',
             developer_name='Nicolò Carcagni',
-            version='1.0.0',
+            version='2.0.0',
             developers=['Nicolò Carcagni https://github.com/nicolocarcagni'],
             copyright='© 2026 Nicolò Carcagni',
             license_type=Gtk.License.GPL_3_0,
@@ -82,7 +85,7 @@ class SwalletApplication(Adw.Application):
                 with open(copying_path, 'r', encoding='utf-8') as f:
                     self._about_dialog.set_license(f.read())
         except Exception as e:
-            print(f"Warning: Could not read COPYING file: {e}")
+            logging.warning(f"Could not read COPYING file: {e}")
 
         # Ensure memory is properly freed upon dismissal
         def on_closed(dialog):
@@ -103,7 +106,7 @@ class SwalletApplication(Adw.Application):
             pref_win.set_transient_for(win)
             pref_win.present()
         else:
-            print("Cannot open preferences: active window has no api client initialized.")
+            logging.error("Cannot open preferences: active window has no api client initialized.")
 
     def create_action(self, name, callback, shortcuts=None):
         """Add an application action.

@@ -1,6 +1,9 @@
 import os
 import json
+import logging
 from gi.repository import Adw, Gtk, GLib, Gdk
+
+from .crypto import WalletAES, WalletKeys, AppWallet
 
 
 @Gtk.Template(resource_path='/io/github/nicolocarcagni/Swallet/preferences.ui')
@@ -27,7 +30,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
                     self.entry_node_url.set_text(url)
                     self.api_client.set_node(url)
             except Exception as e:
-                print(f"Failed to load config: {e}")
+                logging.error(f"Failed to load config: {e}")
                 self.entry_node_url.set_text("https://sole.nicolocarcagni.dev")
         else:
             self.entry_node_url.set_text("https://sole.nicolocarcagni.dev")
@@ -37,7 +40,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             with open(self.config_path, 'w') as f:
                 json.dump({"node_url": url}, f)
         except Exception as e:
-            print(f"Failed to save config: {e}")
+            logging.error(f"Failed to save config: {e}")
 
     @Gtk.Template.Callback()
     def on_url_changed(self, entry):
@@ -69,7 +72,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self._show_toast("Password cannot be empty.")
             return
 
-        from .crypto import WalletAES
+
         try:
             with open(self.wallet_path, 'r') as f:
                 encrypted = json.load(f)
@@ -81,7 +84,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         callback(password, *args)
 
     def _save_wallet_state(self, password: str):
-        from .crypto import AppWallet, WalletAES
+
         keys_str = json.dumps(AppWallet.get().get_all_hex_keys())
         encrypted = WalletAES.encrypt(keys_str, password)
         with open(self.wallet_path, 'w') as f:
@@ -97,7 +100,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
 
     # ── Wallet Management ────────────────────────────────────
     def refresh_wallets_list(self):
-        from .crypto import AppWallet
+
         
         # Remove old rows securely by tracking them natively
         if hasattr(self, '_wallet_rows'):
@@ -142,7 +145,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self._prompt_password("Create Wallet", "Enter your master password to secure the new wallet.", self._do_create_wallet)
         
     def _do_create_wallet(self, password):
-        from .crypto import WalletKeys, AppWallet
+
         try:
             keys = WalletKeys()
             AppWallet.get().add_key(keys.private_key_hex)
@@ -189,7 +192,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self._show_toast("Both fields are required.")
             return
             
-        from .crypto import WalletAES, WalletKeys, AppWallet
+
         try:
             with open(self.wallet_path, 'r') as f:
                 encrypted = json.load(f)
@@ -214,14 +217,14 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self._show_toast(f"Import error: {e}")
 
     def on_delete_wallet_clicked(self, btn, address):
-        from .crypto import AppWallet
+
         if len(AppWallet.get().wallets) <= 1:
             self._show_toast("Cannot delete the last remaining wallet. Use 'Reset Wallet' under Security instead.")
             return
         self._prompt_password("Delete Wallet", f"Are you sure you want to remove wallet {address[:8]}...?", self._do_delete_wallet, address)
 
     def _do_delete_wallet(self, password, address):
-        from .crypto import AppWallet
+
         try:
             AppWallet.get().remove_key(address)
             self._save_wallet_state(password)
@@ -235,7 +238,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self._prompt_password("Export Private Key", f"Enter your master password to reveal the private key for {address[:8]}...?", self._do_export_wallet, address)
 
     def _do_export_wallet(self, password, address):
-        from .crypto import AppWallet
+
         wk = AppWallet.get().wallets.get(address)
         if wk:
             self._show_key_dialog(wk.private_key_hex)
@@ -327,7 +330,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             return
 
         try:
-            from .crypto import WalletAES, AppWallet
+
             with open(self.wallet_path, 'r') as f:
                 encrypted = json.load(f)
             
@@ -335,7 +338,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             WalletAES.decrypt(encrypted, old_pw)
             
             # Re-encrypt the current app wallet listing with new password
-            from .crypto import AppWallet
+
             keys_str = json.dumps(AppWallet.get().get_all_hex_keys())
             new_encrypted = WalletAES.encrypt(keys_str, new_pw)
             
@@ -386,7 +389,7 @@ class PreferencesWindow(Adw.PreferencesWindow):
             return
 
         try:
-            from .crypto import WalletAES, AppWallet
+
             with open(self.wallet_path, 'r') as f:
                 encrypted = json.load(f)
             # Verify password

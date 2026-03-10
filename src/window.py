@@ -4,6 +4,7 @@ import io
 import json
 import time
 import threading
+import logging
 
 from gi.repository import Adw, Gtk, GLib, Gdk, GdkPixbuf, Gio
 
@@ -15,6 +16,7 @@ except ImportError:
 
 from .crypto import WalletAES, WalletKeys, AppWallet, TransactionBuilder, decode_address
 from .api import SoleAPIClient
+from .ui_helpers import build_detail_row, build_copyable_row, copy_to_clipboard
 
 @Gtk.Template(resource_path='/io/github/nicolocarcagni/Swallet/window.ui')
 class SwalletWindow(Adw.ApplicationWindow):
@@ -23,16 +25,16 @@ class SwalletWindow(Adw.ApplicationWindow):
     toast_overlay = Gtk.Template.Child()
     view_stack = Gtk.Template.Child()
     
-    # Setup
+
     setup_password_entry = Gtk.Template.Child()
     btn_create_wallet = Gtk.Template.Child()
     btn_import_wallet = Gtk.Template.Child()
     
-    # Lock
+
     unlock_password_entry = Gtk.Template.Child()
     btn_unlock_wallet = Gtk.Template.Child()
     
-    # Dashboard
+
     nav_view = Gtk.Template.Child()
     receive_nav_page = Gtk.Template.Child()
     send_nav_page = Gtk.Template.Child()
@@ -49,30 +51,41 @@ class SwalletWindow(Adw.ApplicationWindow):
     popover_wallets = Gtk.Template.Child()
     list_wallets = Gtk.Template.Child()
     
-    # Receive
+
     qr_picture = Gtk.Template.Child()
     lbl_receive_address = Gtk.Template.Child()
     
-    # Send
+
     entry_send_address = Gtk.Template.Child()
     entry_send_amount = Gtk.Template.Child()
+    row_send_fee = Gtk.Template.Child()
+    scale_send_fee = Gtk.Template.Child()
+    row_send_memo = Gtk.Template.Child()
+    entry_send_memo = Gtk.Template.Child()
     btn_confirm_send = Gtk.Template.Child()
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
         self.api = SoleAPIClient()
-        self.wallet_path = os.path.join(GLib.get_user_data_dir(), "swallet.json")
-        self._poll_timer_id = None
+        self.wallet_path: str = os.path.join(GLib.get_user_data_dir(), "swallet.json")
+        self._poll_timer_id: int | None = None
+        self._history_rows: list[Gtk.Widget] = []
+        self._switcher_rows: list[Gtk.ListBoxRow] = []
         
-        self.check_wallet_state()
+        self.entry_send_address.connect("notify::text", self._on_send_input_changed)
+        self.entry_send_amount.connect("notify::text", self._on_send_input_changed)
+        self.entry_send_memo.connect("notify::text", self._on_send_input_changed)
+        self.scale_send_fee.connect("value-changed", self._on_fee_scale_changed)
+
+        GLib.idle_add(self.check_wallet_state)
 
     def show_toast(self, message: str):
         sanitized_msg = GLib.markup_escape_text(str(message))
         toast = Adw.Toast.new(sanitized_msg)
         self.toast_overlay.add_toast(toast)
 
-    def check_wallet_state(self):
+    def check_wallet_state(self) -> None:
         self.reset_ui_state()
         if os.path.exists(self.wallet_path):
             self.view_stack.set_visible_child_name("lock_page")
@@ -81,28 +94,42 @@ class SwalletWindow(Adw.ApplicationWindow):
             self.view_stack.set_visible_child_name("setup_page")
             self.setup_password_entry.grab_focus()
 
-    def reset_ui_state(self):
+    def reset_ui_state(self) -> None:
         """Completely clears sensitive inputs, balances, and transaction history."""
-        # Intentionally clear string buffers
-        self.setup_password_entry.set_text("")
-        self.unlock_password_entry.set_text("")
-        self.entry_send_address.set_text("")
-        self.entry_send_amount.set_text("")
+
+        if self.setup_password_entry is not None:
+            self.setup_password_entry.set_text("")
+        if self.unlock_password_entry is not None:
+            self.unlock_password_entry.set_text("")
+        if self.entry_send_address is not None:
+            self.entry_send_address.set_text("")
+        if self.entry_send_amount is not None:
+            self.entry_send_amount.set_text("")
+        if self.scale_send_fee is not None:
+            self.scale_send_fee.set_value(0.005)
+        if self.entry_send_memo is not None:
+            self.entry_send_memo.set_text("")
+            self.entry_send_memo.remove_css_class("error")
+        if self.row_send_memo is not None:
+            self.row_send_memo.set_subtitle("0 / 80 bytes. Publicly visible on the blockchain.")
+        if self.btn_confirm_send is not None:
+            self.btn_confirm_send.set_sensitive(False)
+
+        if self.lbl_balance is not None:
+            self.lbl_balance.set_label("0.00 SOLE")
+        if self.lbl_conn_status is not None:
+            self.lbl_conn_status.set_subtitle("Not connected")
+        if self.lbl_receive_address is not None:
+            self.lbl_receive_address.set_label("No address")
         
-        # Reset labels
-        self.lbl_balance.set_label("0.00 SOLE")
-        self.lbl_conn_status.set_subtitle("Not connected")
-        self.lbl_receive_address.set_label("No address")
-        
-        # Clear loops and child widgets
+
         self._stop_polling()
         
-        if hasattr(self, '_history_rows'):
-            for r in self._history_rows:
-                try:
-                    self.list_history.remove(r)
-                except Exception:
-                    pass
+        for r in self._history_rows:
+            try:
+                self.list_history.remove(r)
+            except Exception:
+                pass
         self._history_rows = []
         
         while child := self.list_history.get_first_child():
@@ -250,18 +277,14 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.refresh_dashboard()
         self._start_polling()
 
-    def refresh_wallet_switcher(self):
-        # Initialize tracking array safely
-        if not hasattr(self, '_switcher_rows'):
-            self._switcher_rows = []
-            
+    def refresh_wallet_switcher(self) -> None:
         wallet_dict = AppWallet.get().wallets
         active_addr = AppWallet.get().current_address
         
         # Track existing addresses in the UI
         existing_addrs = [r.get_name() for r in self._switcher_rows if r.get_name()]
         
-        # 1. Safely remove wallets that were deleted
+
         for r in list(self._switcher_rows):
             addr = r.get_name()
             if addr and addr not in wallet_dict:
@@ -271,7 +294,6 @@ class SwalletWindow(Adw.ApplicationWindow):
                     pass
                 self._switcher_rows.remove(r)
 
-        # 2. Append newly added wallets (do not overwrite existing)
         for address in wallet_dict.keys():
             short_addr = f"{address[:8]}...{address[-6:]}"
             
@@ -283,7 +305,6 @@ class SwalletWindow(Adw.ApplicationWindow):
                 self.list_wallets.append(row)
                 self._switcher_rows.append(row)
                 
-        # 3. Update active wallet highlighting safely
         for r in self._switcher_rows:
             address = r.get_name()
             if address:
@@ -302,7 +323,7 @@ class SwalletWindow(Adw.ApplicationWindow):
         if not new_addr:
             return
             
-        print(f"DEBUG: Switcher selected new address: {new_addr}")
+        logging.debug(f"Switcher selected new address: {new_addr}")
         if new_addr != AppWallet.get().current_address:
             AppWallet.get().current_address = new_addr
             self.reset_ui_state()
@@ -333,7 +354,7 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.refresh_dashboard()
         return True
 
-    def refresh_dashboard(self):
+    def refresh_dashboard(self) -> None:
         wallet = AppWallet.get().wallet_keys
         if not wallet:
             return
@@ -354,13 +375,12 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.show_toast("Refreshing balance...")
         self.refresh_dashboard()
 
-    def _on_history_fetched(self, success, result):
-        if hasattr(self, '_history_rows'):
-            for r in self._history_rows:
-                try:
-                    self.list_history.remove(r)
-                except Exception:
-                    pass
+    def _on_history_fetched(self, success: bool, result) -> None:
+        for r in self._history_rows:
+            try:
+                self.list_history.remove(r)
+            except Exception:
+                pass
         self._history_rows = []
         
         while child := self.list_history.get_first_child():
@@ -419,6 +439,7 @@ class SwalletWindow(Adw.ApplicationWindow):
                 # Format amount
                 amt_str = f"- {amount:.8f} SOLE" if is_sent else f"+ {amount:.8f} SOLE"
                 amt_label = Gtk.Label(label=amt_str)
+                amt_label.add_css_class("numeric")
                 amt_label.add_css_class("error" if is_sent else "success")
                 row.add_suffix(amt_label)
 
@@ -428,69 +449,68 @@ class SwalletWindow(Adw.ApplicationWindow):
                 date_str = dt.format("%b %d, %H:%M") if dt else "Unknown Time"
                 
                 tx_id = tx.get('id', 'Unknown')
-                row.set_subtitle(date_str)
+                
+                # Robust Memo Extraction
+                memo_str = tx.get("memo") or tx.get("Memo") or ""
+                if not memo_str:
+                    for out in outputs_list:
+                        try:
+                            val = float(out.get('value_sole', out.get('value', 1.0)))
+                        except (ValueError, TypeError):
+                            val = 1.0
+                        
+                        if val == 0.0:
+                            memo_candidate = out.get("receiver_address", "") or out.get("address", "")
+                            if memo_candidate.startswith("Memo: "):
+                                memo_candidate = memo_candidate[10:]
+                            memo_str = memo_candidate
+                            break
+                memo_str = str(memo_str).strip()
+                
+                if memo_str:
+                    display_memo = memo_str if len(memo_str) <= 40 else memo_str[:37] + "..."
+                    subtitle_text = f"{date_str}  •  💬 {display_memo}"
+                else:
+                    subtitle_text = date_str
+                    
+                row.set_subtitle(subtitle_text)
                 
                 # ── Advanced Details inside Expander ──
                 
                 # Target Address (From/To)
                 addr_title = "Recipient (To)" if is_sent else "Sender (From)"
-                addr_row = Adw.ActionRow(title=addr_title)
-                addr_label = Gtk.Label(label=target_address, selectable=True, wrap=True, max_width_chars=32, halign=Gtk.Align.END)
-                addr_label.add_css_class("dim-label")
-                addr_row.add_suffix(addr_label)
-                
-                addr_copy = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER)
-                addr_copy.add_css_class("flat")
-                addr_copy.connect("clicked", self._on_copy_txid_clicked, target_address)
-                addr_row.add_suffix(addr_copy)
+                addr_row = build_copyable_row(
+                    addr_title, target_address,
+                    self._on_copy_clicked, css_classes=["monospace"]
+                )
                 row.add_row(addr_row)
                 
                 # Full TXID
-                txid_row = Adw.ActionRow(title="Transaction Hash")
-                txid_label = Gtk.Label(label=tx_id, selectable=True, wrap=True, max_width_chars=32, halign=Gtk.Align.END)
-                txid_label.add_css_class("dim-label")
-                txid_row.add_suffix(txid_label)
-                
-                copy_btn = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER)
-                copy_btn.add_css_class("flat")
-                copy_btn.connect("clicked", self._on_copy_txid_clicked, tx_id)
-                txid_row.add_suffix(copy_btn)
+                txid_row = build_copyable_row(
+                    "Transaction Hash", tx_id,
+                    self._on_copy_clicked, css_classes=["monospace"]
+                )
                 row.add_row(txid_row)
-                
+
                 # Date & Time
-                time_row = Adw.ActionRow(title="Date &amp; Time")
                 full_date_str = dt.format("%Y-%m-%d %H:%M:%S") if dt else "Unknown Date"
-                time_label = Gtk.Label(label=full_date_str)
-                time_label.add_css_class("dim-label")
-                time_row.add_suffix(time_label)
-                row.add_row(time_row)
+                row.add_row(build_detail_row("Date &amp; Time", full_date_str))
                 
                 # Status / Confirmations
-                status_row = Adw.ActionRow(title="Status")
-                # Assuming simple confirmed status or using string if available
                 is_confirmed = tx.get("confirmed", True)
                 status_text = "Confirmed" if is_confirmed else "Unconfirmed"
-                status_label = Gtk.Label(label=status_text)
-                status_label.add_css_class("dim-label")
-                status_row.add_suffix(status_label)
-                row.add_row(status_row)
+                row.add_row(build_detail_row("Status", status_text))
                 
                 # Network Fee
                 fee = tx.get("fee_sole", None)
                 if fee is not None:
-                    fee_row = Adw.ActionRow(title="Network Fee")
-                    fee_label = Gtk.Label(label=f"{fee:.8f} SOLE")
-                    fee_label.add_css_class("dim-label")
-                    fee_row.add_suffix(fee_label)
-                    row.add_row(fee_row)
+                    row.add_row(build_detail_row("Network Fee", f"{fee:.8f} SOLE"))
                 
                 self.list_history.append(row)
                 self._history_rows.append(row)
 
-    def _on_copy_txid_clicked(self, btn, tx_id):
-        clipboard = self.get_clipboard()
-        clipboard.set_content(Gdk.ContentProvider.new_for_value(tx_id))
-        self.show_toast("Transaction Hash copied to clipboard!")
+    def _on_copy_clicked(self, btn, text: str) -> None:
+        copy_to_clipboard(self, text, "Copied to clipboard!")
 
     @Gtk.Template.Callback()
     def on_copy_address_clicked(self, btn):
@@ -519,20 +539,58 @@ class SwalletWindow(Adw.ApplicationWindow):
                 texture = Gdk.Texture.new_for_pixbuf(pixbuf)
                 self.qr_picture.set_paintable(texture)
             except Exception as e:
-                print("Failed to load QR pixbuf:", e)
+                logging.error(f"Failed to load QR pixbuf: {e}")
         
         self.nav_view.push(self.receive_nav_page)
+
+    def _on_fee_scale_changed(self, scale):
+        val = scale.get_value()
+        if val <= 0.002:
+            self.row_send_fee.set_subtitle("Low Priority (Slow)")
+        elif val >= 0.01:
+            self.row_send_fee.set_subtitle("High Priority (Fast)")
+        else:
+            self.row_send_fee.set_subtitle("Standard")
+
+    def _on_send_input_changed(self, entry, pspec):
+        target_addr = self.entry_send_address.get_text().strip()
+        amount_text = self.entry_send_amount.get_text().strip()
+        memo_text = self.entry_send_memo.get_text()
+
+        # Update memo counter
+        memo_bytes = len(memo_text.encode('utf-8'))
+        self.row_send_memo.set_subtitle(f"{memo_bytes} / 80 bytes. Publicly visible on the blockchain.")
+        is_memo_valid = True
+        if memo_bytes > 80:
+            self.entry_send_memo.add_css_class("error")
+            is_memo_valid = False
+        else:
+            self.entry_send_memo.remove_css_class("error")
+
+        is_valid = bool(target_addr and amount_text)
+        try:
+            val = float(amount_text)
+            if val <= 0:
+                is_valid = False
+        except ValueError:
+            is_valid = False
+
+        self.btn_confirm_send.set_sensitive(is_valid and is_memo_valid)
 
     @Gtk.Template.Callback()
     def on_nav_send_clicked(self, btn):
         self.entry_send_address.set_text("")
         self.entry_send_amount.set_text("")
+        self.scale_send_fee.set_value(0.005)
+        self.entry_send_memo.set_text("")
         self.nav_view.push(self.send_nav_page)
 
     @Gtk.Template.Callback()
     def on_confirm_send_clicked(self, btn):
         target_addr = self.entry_send_address.get_text().strip()
         amount_text = self.entry_send_amount.get_text().strip()
+        fee_sole = self.scale_send_fee.get_value()
+        memo_text = self.entry_send_memo.get_text().strip()
 
         if not target_addr:
             self.show_toast("Please enter a destination address.")
@@ -541,17 +599,29 @@ class SwalletWindow(Adw.ApplicationWindow):
         try:
             amount_sole = float(amount_text)
             amount_satoshis = int(amount_sole * 100_000_000)
+            if fee_sole < 0:
+                raise ValueError("Negative fee")
+            fee_satoshis = int(fee_sole * 100_000_000)
         except ValueError:
-            self.show_toast("Invalid amount.")
+            self.show_toast("Invalid amount or fee.")
             return
 
         if amount_satoshis <= 0:
             self.show_toast("Amount must be greater than zero.")
             return
+            
+        if len(memo_text.encode('utf-8')) > 80:
+            self.entry_send_memo.add_css_class("error")
+            self.show_toast("Memo exceeds 80 bytes.")
+            return
+        else:
+            self.entry_send_memo.remove_css_class("error")
 
         # Build a human-readable summary
         short_addr = f"{target_addr[:8]}...{target_addr[-6:]}"
-        body = f"Send {amount_sole:.8f} SOLE to {short_addr}?"
+        body = f"Send {amount_sole:.8f} SOLE (Fee: {fee_sole:.8f}) to {short_addr}?"
+        if memo_text:
+            body += f"\n\nMemo: {memo_text}"
 
         dialog = Adw.AlertDialog(
             heading="Confirm Transaction",
@@ -562,58 +632,80 @@ class SwalletWindow(Adw.ApplicationWindow):
         dialog.set_response_appearance("send", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")
-        dialog.connect("response", self._on_send_dialog_response, target_addr, amount_satoshis)
+        dialog.connect("response", self._on_send_dialog_response, target_addr, amount_satoshis, fee_satoshis, memo_text)
         dialog.present(self)
 
-    def _on_send_dialog_response(self, dialog, response, target_addr, amount_satoshis):
+    def _on_send_dialog_response(self, dialog, response, target_addr, amount_satoshis, fee_satoshis, memo_text):
         """Handle the confirmation dialog response."""
         if response != "send":
             return
 
         address = AppWallet.get().wallet_keys.address
         self.btn_confirm_send.set_sensitive(False)
-        self.api.get_utxos_async(address, lambda s, r: self._build_and_send_tx(s, r, target_addr, amount_satoshis))
+        self.api.get_utxos_async(address, lambda s, r: self._build_and_send_tx(s, r, target_addr, amount_satoshis, fee_satoshis, memo_text))
 
-    def _build_and_send_tx(self, success, utxos, target_addr, amount_satoshis):
+    def _build_and_send_tx(self, success, utxos, target_addr, amount_satoshis, fee_satoshis, memo_text):
         if not success:
             self.btn_confirm_send.set_sensitive(True)
             self.show_toast("Failed to fetch UTXOs.")
             return
 
-        try:
-            tx = TransactionBuilder()
-            # All UTXOs belong to our wallet, so they share the same pubkeyhash
-            wallet_pubkeyhash = decode_address(AppWallet.get().wallet_keys.address)
-            total_in = 0
-            for utxo in utxos:
-                tx.add_input(utxo['txid'], utxo['vout'], wallet_pubkeyhash)
-                total_in += utxo['amount']
-                if total_in >= amount_satoshis:
-                    break
-                    
-            if total_in < amount_satoshis:
-                self.btn_confirm_send.set_sensitive(True)
-                self.show_toast("Insufficient funds.")
-                return
-                
-            tx.add_output(decode_address(target_addr), amount_satoshis)
-            change = total_in - amount_satoshis
-            if change > 0:
-                tx.add_output(wallet_pubkeyhash, change)
+        self.show_toast("Signing transaction…")
 
-            tx.timestamp = int(time.time())
-            tx.sign(AppWallet.get().wallet_keys)
-            hex_payload = tx.serialize()
-            
-            self.api.send_transaction_async(hex_payload, self._on_send_result)
-        except Exception as e:
-            self.btn_confirm_send.set_sensitive(True)
-            self.show_toast(f"Transaction build error: {e}")
+        # Capture wallet state needed by the worker thread
+        wallet_keys = AppWallet.get().wallet_keys
+        wallet_pubkeyhash = decode_address(wallet_keys.address)
+
+        def _sign_worker():
+            """Runs UTXO selection + ECDSA signing off the main thread."""
+            try:
+                tx = TransactionBuilder()
+                total_in = 0
+
+                target_amount_with_fee = amount_satoshis + fee_satoshis
+                for utxo in utxos:
+                    tx.add_input(utxo['txid'], utxo['vout'], wallet_pubkeyhash)
+                    total_in += utxo['amount']
+                    if total_in >= target_amount_with_fee:
+                        break
+
+                if total_in < target_amount_with_fee:
+                    GLib.idle_add(self._on_sign_error, "Insufficient funds (including fee).")
+                    return
+
+                tx.add_output(decode_address(target_addr), amount_satoshis)
+
+                if memo_text:
+                    memo_bytes = memo_text.encode('utf-8')
+                    tx.add_output(memo_bytes, 0)
+
+                change = total_in - target_amount_with_fee
+                if change > 0:
+                    tx.add_output(wallet_pubkeyhash, change)
+
+                tx.timestamp = int(time.time())
+                tx.sign(wallet_keys)
+                hex_payload = tx.serialize()
+
+                GLib.idle_add(self._on_sign_complete, hex_payload)
+            except Exception as e:
+                GLib.idle_add(self._on_sign_error, str(e))
+
+        threading.Thread(target=_sign_worker, daemon=True).start()
+
+    def _on_sign_complete(self, hex_payload: str) -> None:
+        """Called on the main thread after successful signing."""
+        self.api.send_transaction_async(hex_payload, self._on_send_result)
+
+    def _on_sign_error(self, error_msg: str) -> None:
+        """Called on the main thread if signing fails."""
+        self.btn_confirm_send.set_sensitive(True)
+        self.show_toast(f"Transaction build error: {error_msg}")
 
     def _on_send_result(self, success, result):
         self.btn_confirm_send.set_sensitive(True)
         if success and "error" not in result:
-            self.show_toast("Transaction sent successfully!")
+            self.show_toast("Transaction broadcasted successfully!")
             self.nav_view.pop()
             self.refresh_dashboard()
         else:

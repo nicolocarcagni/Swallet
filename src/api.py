@@ -27,12 +27,7 @@ class SoleAPIClient:
             
         req = urllib.request.Request(url, method=method, headers=headers)
         if payload:
-            req.data = json.dumps(payload).encode('utf-8')
-            if 'hex' in payload:
-                raw_hex = payload['hex']
-                print(f"DEBUG POST PAYLOAD: {{'hex': '{raw_hex[:20]}...{raw_hex[-20:]}'}}")
-            
-        print(f"DEBUG API CALL: {url}")
+                req.data = json.dumps(payload).encode('utf-8')
         try:
             with urllib.request.urlopen(req, timeout=10) as response:
                 body = response.read().decode('utf-8')
@@ -74,7 +69,8 @@ class SoleAPIClient:
         return self._request('GET', '/consensus/validators')
 
     def send_transaction(self, hex_payload: str):
-        return self._request('POST', '/tx/send', payload={"hex": hex_payload})
+        payload = {"hex": hex_payload}
+        return self._request('POST', '/tx/send', payload=payload)
 
     # --- Asynchronous Helpers ---
     def _run_async(self, func, callback, *args, **kwargs):
