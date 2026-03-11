@@ -45,6 +45,7 @@ class SwalletWindow(Adw.ApplicationWindow):
     btn_refresh = Gtk.Template.Child()
     btn_nav_receive = Gtk.Template.Child()
     btn_nav_send = Gtk.Template.Child()
+    scroll_history = Gtk.Template.Child()
     list_history = Gtk.Template.Child()
 
     btn_wallet_switcher = Gtk.Template.Child()
@@ -72,11 +73,18 @@ class SwalletWindow(Adw.ApplicationWindow):
         self._poll_timer_id: int | None = None
         self._history_rows: list[Gtk.Widget] = []
         self._switcher_rows: list[Gtk.ListBoxRow] = []
+        self._tx_history_full: list[dict] = []
+        self._tx_rendered_count: int = 0
+        self._CHUNK_SIZE = 20
+        self._is_rendering = False
         
         self.entry_send_address.connect("notify::text", self._on_send_input_changed)
         self.entry_send_amount.connect("notify::text", self._on_send_input_changed)
         self.entry_send_memo.connect("notify::text", self._on_send_input_changed)
         self.scale_send_fee.connect("value-changed", self._on_fee_scale_changed)
+
+        # Connect to ScrolledWindow directly for infinite scrolling
+        self.scroll_history.connect("edge-reached", self._on_scroll_edge_reached)
 
         GLib.idle_add(self.check_wallet_state)
 
@@ -376,6 +384,8 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.refresh_dashboard()
 
     def _on_history_fetched(self, success: bool, result) -> None:
+        self._is_rendering = False
+        
         for r in self._history_rows:
             try:
                 self.list_history.remove(r)
@@ -390,16 +400,35 @@ class SwalletWindow(Adw.ApplicationWindow):
                 break
 
         if success and isinstance(result, list):
-            if not result:
+            self._tx_history_full = result
+            self._tx_rendered_count = 0
+            
+            if not self._tx_history_full:
                 empty = Gtk.Label(label="No transactions found")
                 empty.add_css_class("dim-label")
                 self.list_history.append(empty)
                 self._history_rows.append(empty)
                 return
 
-            address = AppWallet.get().wallet_keys.address
+            # Start rendering the first chunk
+            self._render_next_chunk()
 
-            for tx in result:
+    def _on_scroll_edge_reached(self, scrolled_window, position):
+        if position == Gtk.PositionType.BOTTOM and not self._is_rendering:
+            self._render_next_chunk()
+
+    def _render_next_chunk(self):
+        if self._is_rendering or self._tx_rendered_count >= len(self._tx_history_full):
+            return
+            
+        self._is_rendering = True
+        
+        def render_generator():
+            address = AppWallet.get().wallet_keys.address
+            end_index = min(self._tx_rendered_count + self._CHUNK_SIZE, len(self._tx_history_full))
+            
+            for index in range(self._tx_rendered_count, end_index):
+                tx = self._tx_history_full[index]
                 inputs_list = tx.get("inputs", [])
                 outputs_list = tx.get("outputs", [])
                 is_sent = any(inp.get("sender_address") == address for inp in inputs_list)
@@ -508,6 +537,23 @@ class SwalletWindow(Adw.ApplicationWindow):
                 
                 self.list_history.append(row)
                 self._history_rows.append(row)
+                
+                # Yield control back to GTK main loop after rendering each row
+                yield True
+
+            self._tx_rendered_count = end_index
+            self._is_rendering = False
+            yield False  # Stop idle callback
+
+        gen = render_generator()
+        
+        def consume_generator():
+            try:
+                return next(gen)
+            except StopIteration:
+                return False
+
+        GLib.idle_add(consume_generator)
 
     def _on_copy_clicked(self, btn, text: str) -> None:
         copy_to_clipboard(self, text, "Copied to clipboard!")
