@@ -688,14 +688,9 @@ class SwalletWindow(Adw.ApplicationWindow):
 
         address = AppWallet.get().wallet_keys.address
         self.btn_confirm_send.set_sensitive(False)
-        self.api.get_utxos_async(address, lambda s, r: self._build_and_send_tx(s, r, target_addr, amount_satoshis, fee_satoshis, memo_text))
+        self._build_and_send_tx(address, target_addr, amount_satoshis, fee_satoshis, memo_text)
 
-    def _build_and_send_tx(self, success, utxos, target_addr, amount_satoshis, fee_satoshis, memo_text):
-        if not success:
-            self.btn_confirm_send.set_sensitive(True)
-            self.show_toast("Failed to fetch UTXOs.")
-            return
-
+    def _build_and_send_tx(self, address, target_addr, amount_satoshis, fee_satoshis, memo_text):
         self.show_toast("Signing transaction…")
 
         # Capture wallet state needed by the worker thread
@@ -703,8 +698,13 @@ class SwalletWindow(Adw.ApplicationWindow):
         wallet_pubkeyhash = decode_address(wallet_keys.address)
 
         def _sign_worker():
-            """Runs UTXO selection + ECDSA signing off the main thread."""
+            """Runs UTXO fetching + selection + ECDSA signing off the main thread."""
             try:
+                # 1. Strict Just-In-Time UTXO Fetch
+                utxos = self.api.get_utxos(address)
+                if not isinstance(utxos, list):
+                    raise ValueError(f"Invalid UTXO response format. Expected list, got {type(utxos)}")
+
                 tx = TransactionBuilder()
                 total_in = 0
 
