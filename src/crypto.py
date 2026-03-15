@@ -109,20 +109,16 @@ class TransactionBuilder:
     def __init__(self):
         self.inputs = []
         self.outputs = []
-        self.timestamp = 0  # Unix epoch; set before broadcasting
+        self.timestamp = 0
 
-    # ── helpers ───────────────────────────────────────────────
     @staticmethod
     def _pack_int64(n: int) -> bytes:
-        """Pack a single value as Big Endian signed int64."""
         return struct.pack('>q', n)
 
     @staticmethod
     def _pack_bytes(data: bytes) -> bytes:
-        """Length-prefix + raw bytes  (length as int64 BE)."""
         return struct.pack('>q', len(data)) + data
 
-    # ── building ──────────────────────────────────────────────
     def add_input(self, txid: str, vout: int, prev_pubkeyhash: bytes):
         """Add an input.  `prev_pubkeyhash` is the 20-byte RIPEMD160 hash
         of the output being spent (needed for the trimmed-copy signing loop)."""
@@ -142,7 +138,6 @@ class TransactionBuilder:
             'value': value,
         })
 
-    # ── serialize_for_hash (matches Go SerializeForHash) ─────
     def _serialize_for_hash(self, inputs_snapshot: list) -> bytes:
         """Serialize for hashing — NO length prefixes anywhere.
 
@@ -169,7 +164,6 @@ class TransactionBuilder:
 
         return bytes(buf)
 
-    # ── wire-format serialization (matches Go Serialize) ─────
     def _serialize_core(self, include_sig: bool) -> bytes:
         """Full binary serialization for broadcasting.
 
@@ -201,7 +195,6 @@ class TransactionBuilder:
 
         return bytes(buf)
 
-    # ── signing (trimmed copy, per-input) ─────────────────────
     def sign(self, wallet: WalletKeys):
         """Sign each input using Go's trimmed-copy logic.
 
@@ -297,9 +290,6 @@ class AppWallet:
         if self.current_address == address:
             self.current_address = list(self.wallets.keys())[0] if self.wallets else None
 
-    def get_all_hex_keys(self) -> list:
-        return [wk.private_key_hex for wk in self.wallets.values()]
-        
     def clear(self):
         self.wallets.clear()
         self.current_address = None

@@ -1,4 +1,3 @@
-# window.py
 import os
 import io
 import json
@@ -130,8 +129,6 @@ class SwalletWindow(Adw.ApplicationWindow):
             self.lbl_conn_status.set_subtitle("Not connected")
         if self.lbl_receive_address is not None:
             self.lbl_receive_address.set_label("No address")
-        
-
         self._stop_polling()
         
         for r in self._history_rows:
@@ -292,7 +289,6 @@ class SwalletWindow(Adw.ApplicationWindow):
         
         # Track existing addresses in the UI
         existing_addrs = [r.get_name() for r in self._switcher_rows if r.get_name()]
-        
 
         for r in list(self._switcher_rows):
             addr = r.get_name()
@@ -339,8 +335,6 @@ class SwalletWindow(Adw.ApplicationWindow):
             self.show_dashboard()
             
         self.popover_wallets.popdown()
-
-    # ── Auto-polling ─────────────────────────────────────────
     def _start_polling(self):
         """Start the 15-second background balance refresh loop."""
         self._stop_polling()
@@ -504,8 +498,6 @@ class SwalletWindow(Adw.ApplicationWindow):
                     subtitle_text = date_str
                     
                 row.set_subtitle(subtitle_text)
-                
-                # ── Advanced Details inside Expander ──
                 
                 # Target Address (From/To)
                 addr_title = "Recipient (To)" if is_sent else "Sender (From)"
@@ -700,19 +692,16 @@ class SwalletWindow(Adw.ApplicationWindow):
     def _build_and_send_tx(self, address, target_addr, amount_satoshis: int, fee_satoshis: int, memo_text: str):
         self.show_toast("Signing transaction…")
 
-        # Capture wallet state needed by the worker thread
         wallet_keys = AppWallet.get().wallet_keys
         wallet_pubkeyhash = decode_address(wallet_keys.address)
 
         def _sign_worker():
-            """Runs UTXO fetching + selection + ECDSA signing off the main thread."""
             try:
                 # 1. Strict Just-In-Time UTXO Fetch
                 utxos = self.api.get_utxos(address)
                 if not isinstance(utxos, list):
                     raise ValueError(f"Invalid UTXO response format. Expected list, got {type(utxos)}")
 
-                # Convert local integer satoshis instantly to Decimal logic to guarantee precision
                 amount_dec = Decimal(str(amount_satoshis))
                 fee_dec = Decimal(str(fee_satoshis))
                 target_amount_with_fee = amount_dec + fee_dec
@@ -720,7 +709,6 @@ class SwalletWindow(Adw.ApplicationWindow):
                 tx = TransactionBuilder()
                 total_in = Decimal("0")
 
-                # 2. Iterate UTXOs and cast Node JSON amounts strictly to Decimal
                 for utxo in utxos:
                     tx.add_input(utxo['txid'], utxo['vout'], wallet_pubkeyhash)
                     
@@ -734,15 +722,13 @@ class SwalletWindow(Adw.ApplicationWindow):
                     GLib.idle_add(self._on_sign_error, "Insufficient funds (including fee).")
                     return
 
-                # Send output to destination
                 tx.add_output(decode_address(target_addr), int(amount_dec))
 
-                # Append zero-trust memo
                 if memo_text:
                     memo_bytes = memo_text.encode('utf-8')
                     tx.add_output(memo_bytes, 0)
 
-                # 3. CRITICAL Fix: Absolute mathematical determinism for change logic using Decimal
+                # Absolute mathematical determinism for change logic using Decimal
                 change_dec = total_in - amount_dec - fee_dec
                 
                 if change_dec > Decimal("0"):

@@ -48,7 +48,6 @@ class PreferencesWindow(Adw.PreferencesWindow):
         self.api_client.set_node(url)
         self._save_config(url)
 
-    # ── Master Password Prompt Helper ────────────────────────
     def _prompt_password(self, heading: str, body: str, callback, *args):
         dialog = Adw.AlertDialog(heading=heading, body=body)
         dialog.add_response("cancel", "Cancel")
@@ -98,7 +97,6 @@ class PreferencesWindow(Adw.PreferencesWindow):
             if hasattr(main_win, 'show_dashboard'):
                 main_win.show_dashboard()
 
-    # ── Wallet Management ────────────────────────────────────
     def refresh_wallets_list(self):
 
         
@@ -283,7 +281,6 @@ class PreferencesWindow(Adw.PreferencesWindow):
         toast = Adw.Toast.new(GLib.markup_escape_text(str(message)))
         self.add_toast(toast)
 
-    # ── Change Master Password ───────────────────────────────
     @Gtk.Template.Callback()
     def on_change_password_clicked(self, btn):
         dialog = Adw.AlertDialog(
@@ -355,7 +352,6 @@ class PreferencesWindow(Adw.PreferencesWindow):
             self._show_toast(f"Error changing password: {e}")
             return
 
-    # ── Reset Wallet ─────────────────────────────────────────
     @Gtk.Template.Callback()
     def on_reset_wallet_clicked(self, btn):
         dialog = Adw.AlertDialog(
