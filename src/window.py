@@ -5,6 +5,7 @@ import json
 import time
 import threading
 import logging
+from decimal import Decimal
 
 from gi.repository import Adw, Gtk, GLib, Gdk, GdkPixbuf, Gio
 
@@ -635,7 +636,6 @@ class SwalletWindow(Adw.ApplicationWindow):
     def on_confirm_send_clicked(self, btn):
         target_addr = self.entry_send_address.get_text().strip()
         amount_text = self.entry_send_amount.get_text().strip()
-        fee_sole = self.scale_send_fee.get_value()
         memo_text = self.entry_send_memo.get_text().strip()
 
         if not target_addr:
@@ -643,12 +643,19 @@ class SwalletWindow(Adw.ApplicationWindow):
             return
         
         try:
-            amount_sole = float(amount_text)
-            amount_satoshis = int(amount_sole * 100_000_000)
-            if fee_sole < 0:
+            # 1. Instantly cast user input to Decimal from string (never float)
+            amount_sole = Decimal(amount_text)
+            
+            # 2. Extract fee scale value safely to Decimal
+            fee_str = f"{self.scale_send_fee.get_value():.8f}"
+            fee_sole = Decimal(fee_str)
+            
+            if fee_sole < Decimal("0"):
                 raise ValueError("Negative fee")
-            fee_satoshis = int(fee_sole * 100_000_000)
-        except ValueError:
+                
+            amount_satoshis = int(amount_sole * Decimal("100000000"))
+            fee_satoshis = int(fee_sole * Decimal("100000000"))
+        except Exception:
             self.show_toast("Invalid amount or fee.")
             return
 
@@ -663,7 +670,7 @@ class SwalletWindow(Adw.ApplicationWindow):
         else:
             self.entry_send_memo.remove_css_class("error")
 
-        # Build a human-readable summary
+        # Build a human-readable summary natively with Decimal formatting
         short_addr = f"{target_addr[:8]}...{target_addr[-6:]}"
         body = f"Send {amount_sole:.8f} SOLE (Fee: {fee_sole:.8f}) to {short_addr}?"
         if memo_text:
@@ -690,7 +697,7 @@ class SwalletWindow(Adw.ApplicationWindow):
         self.btn_confirm_send.set_sensitive(False)
         self._build_and_send_tx(address, target_addr, amount_satoshis, fee_satoshis, memo_text)
 
-    def _build_and_send_tx(self, address, target_addr, amount_satoshis, fee_satoshis, memo_text):
+    def _build_and_send_tx(self, address, target_addr, amount_satoshis: int, fee_satoshis: int, memo_text: str):
         self.show_toast("Signing transaction…")
 
         # Capture wallet state needed by the worker thread
@@ -705,13 +712,21 @@ class SwalletWindow(Adw.ApplicationWindow):
                 if not isinstance(utxos, list):
                     raise ValueError(f"Invalid UTXO response format. Expected list, got {type(utxos)}")
 
-                tx = TransactionBuilder()
-                total_in = 0
+                # Convert local integer satoshis instantly to Decimal logic to guarantee precision
+                amount_dec = Decimal(str(amount_satoshis))
+                fee_dec = Decimal(str(fee_satoshis))
+                target_amount_with_fee = amount_dec + fee_dec
 
-                target_amount_with_fee = amount_satoshis + fee_satoshis
+                tx = TransactionBuilder()
+                total_in = Decimal("0")
+
+                # 2. Iterate UTXOs and cast Node JSON amounts strictly to Decimal
                 for utxo in utxos:
                     tx.add_input(utxo['txid'], utxo['vout'], wallet_pubkeyhash)
-                    total_in += utxo['amount']
+                    
+                    utxo_val = Decimal(str(utxo['amount']))
+                    total_in += utxo_val
+                    
                     if total_in >= target_amount_with_fee:
                         break
 
@@ -719,15 +734,19 @@ class SwalletWindow(Adw.ApplicationWindow):
                     GLib.idle_add(self._on_sign_error, "Insufficient funds (including fee).")
                     return
 
-                tx.add_output(decode_address(target_addr), amount_satoshis)
+                # Send output to destination
+                tx.add_output(decode_address(target_addr), int(amount_dec))
 
+                # Append zero-trust memo
                 if memo_text:
                     memo_bytes = memo_text.encode('utf-8')
                     tx.add_output(memo_bytes, 0)
 
-                change = total_in - target_amount_with_fee
-                if change > 0:
-                    tx.add_output(wallet_pubkeyhash, change)
+                # 3. CRITICAL Fix: Absolute mathematical determinism for change logic using Decimal
+                change_dec = total_in - amount_dec - fee_dec
+                
+                if change_dec > Decimal("0"):
+                    tx.add_output(wallet_pubkeyhash, int(change_dec))
 
                 tx.timestamp = int(time.time())
                 tx.sign(wallet_keys)
